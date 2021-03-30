@@ -1456,6 +1456,31 @@ error:
     return REDIS_ERR;
 }
 
+int cluster_enable_nocluster_fallback(redisClusterContext *cc) {
+    dictEntry *den;
+    dictIterator di;
+    cluster_node *first_node;
+
+    dictInitIterator(&di, cc->nodes);
+    if (!(den = dictNext(&di))) {
+        __redisClusterSetError(cc, REDIS_ERR_OTHER, "no node configured");
+        return REDIS_ERR;
+    }
+
+    first_node = dictGetEntryVal(den);
+    if ((den = dictNext(&di))) {
+        __redisClusterSetError(cc, REDIS_ERR_OTHER,
+        "more than one node is configured, but Redis cluster mode is disabled");
+        return REDIS_ERR;
+    }
+
+    for (int i = 0; i < REDIS_CLUSTER_SLOTS; i++) {
+        cc->table[i] = first_node;
+    }
+
+    return REDIS_OK;
+}
+
 int cluster_update_route(redisClusterContext *cc) {
     int ret;
     int flag_err_not_set = 1;
@@ -1494,6 +1519,14 @@ int cluster_update_route(redisClusterContext *cc) {
 
     if (flag_err_not_set) {
         __redisClusterSetError(cc, REDIS_ERR_OTHER, "no valid server address");
+    }
+
+    if (cc->flags & HIRCLUSTER_FLAG_NOCLUSTER_FALLBACK &&
+        strcmp(cc->errstr, HIRCLUSTER_ENOCLUSTER) == 0) {
+        // This instance has cluster support disabled
+        cc->err = 0;
+        memset(cc->errstr, '\0', strlen(cc->errstr));
+        return cluster_enable_nocluster_fallback(cc);
     }
 
     return REDIS_ERR;
@@ -1870,6 +1903,17 @@ int redisClusterSetOptionRouteUseSlots(redisClusterContext *cc) {
     }
 
     cc->flags |= HIRCLUSTER_FLAG_ROUTE_USE_SLOTS;
+
+    return REDIS_OK;
+}
+
+int redisClusterSetOptionNoclusterFallback(redisClusterContext *cc) {
+
+    if (cc == NULL) {
+        return REDIS_ERR;
+    }
+
+    cc->flags |= HIRCLUSTER_FLAG_NOCLUSTER_FALLBACK;
 
     return REDIS_OK;
 }
